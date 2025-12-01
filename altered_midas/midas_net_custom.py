@@ -14,7 +14,7 @@ class MidasNet_small(BaseModel):
     """
 
     def __init__(self, activation='sigmoid', pretrained=False, features=64, backbone="efficientnet_lite3", exportable=True, channels_last=False, align_corners=True,
-        blocks={'expand': True}, input_channels=3, output_channels=1, out_bias=0):
+        blocks={'expand': True}, input_channels=3, output_channels=1, out_bias=0, last_residual=False):
         """Init.
 
         Args:
@@ -29,6 +29,7 @@ class MidasNet_small(BaseModel):
         self.channels_last = channels_last
         self.blocks = blocks
         self.backbone = backbone
+        self.last_res = last_residual
 
         self.groups = 1
 
@@ -57,13 +58,16 @@ class MidasNet_small(BaseModel):
             output_act = nn.Sigmoid()
         if activation == 'tanh':
             output_act = nn.Tanh()
+        if activation == 'relu':
+            output_act = nn.ReLU()
         if activation == 'none':
             output_act = nn.Identity()
         
+        res_dim = (features // 2) + (input_channels if last_residual else 0)
         self.scratch.output_conv = nn.Sequential(
             nn.Conv2d(features, features//2, kernel_size=3, stride=1, padding=1, groups=self.groups),
             Interpolate(scale_factor=2, mode="bilinear"),
-            nn.Conv2d(features//2, 32, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(res_dim, 32, kernel_size=3, stride=1, padding=1),
             self.scratch.activation,
             nn.Conv2d(32, output_channels, kernel_size=1, stride=1, padding=0),
             output_act
@@ -101,12 +105,17 @@ class MidasNet_small(BaseModel):
         path_2 = self.scratch.refinenet2(path_3, layer_2_rn)
         path_1 = self.scratch.refinenet1(path_2, layer_1_rn)
         
-        out = self.scratch.output_conv(path_1)
+        out = self.scratch.output_conv[0](path_1)
+        out = self.scratch.output_conv[1](out)
 
-        # if self.out_chan == 1:
-        #     return torch.squeeze(out, dim=1)
-        # else:
-        #     return out
+        if self.last_res:
+            out = torch.cat((out, x), dim=1)
+
+        out = self.scratch.output_conv[2](out)
+        out = self.scratch.output_conv[3](out)
+        out = self.scratch.output_conv[4](out)
+        out = self.scratch.output_conv[5](out)
+
         return out
 
 
